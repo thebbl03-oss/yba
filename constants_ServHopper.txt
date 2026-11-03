@@ -1,0 +1,42 @@
+Строковые константы ServHopper (2-й слой, расшифрованные)
+============================================================
+
+'function'
+'table'
+'<I4I4I4'
+'<I4I4I4I4I4I4I4I4'
+'<I4I4I4I4I4I4I4I4I4I4I4I4I4I4I4I4'
+'insert'
+'bit32'
+'byte'
+'char'
+'gmatch'
+'type'
+'pcall'
+'error'
+'bxor'
+'string'
+'unpack'
+'getmetatable'
+'__mode'
+'create'
+'tonumber'
+'select'
+'pairs'
+'setmetatable'
+'band'
+'btest'
+'move'
+'pack'
+'lshift'
+'.....'
+'|5ga(A1uoR>;G3w3G$rKhS2|)#gW4XS?pW?JJwVJ*g*jt{|8A*SW8buUjG563-y%)^pgJ(<BJRVo(kjtXZfi7eCnm)|8E4ax45wZ*Z&2qufC|U1TOyq5@7{4A|fsSBL_T74_pmV{}~1-&ud`Mo&OA2m-KN^#by8TaRpqm0_ki20s9PeevCyH|9x7{ycyc*2LFF=dwy(u0Yd)}p>wjE0*Xohw7YNI3Gc^@|1bme<nsev@Ba=|fgYb2o>c$9Lz4rPPJ$2rlMIX)jtiI!|C|$_29_RySpSq8q-D4~zajsjE2J^EDz10`>L;r|x-7CR|L{MsKEE=wHUGSO+fU6~f=2(!O~p}+O~g<C$qU_5)JO+9|MEMy3d6Y!`~To4^)a)DB7OfV!0H2lBc%cVkOUeL7z+YX|0@O#M-oC4OaBaLZgX&OY;ON^XnB8V21q{tMKVey5EYTF|1=)NmY&E;QvXSwWV@sgQ<?t=heX0$C2K(c(f%ClD^dY@{{p7Z0TKqiqW^}xh5iQ#tTq3r2E8>9(Ld$?p{vm}401RK|6a=M5t9MJ2>+tBVPhX3vM~PvfdQ5T(Z<&Q%Mdv>pBs5o|4lq>$y+$Cq5nZV5O3G}j{g5ll3}9+$Kb^O649;#Y$gHU{{&`pVR-^8s{aDe=>?04l9m6D1|(+l$yLPv5NRj4@&C~^|J?a`Z|sv`YX6rIDBq~R9?Ji$$cKGHb@+Jy-=qe-y1%8R|E&ff8c4OR?Eeg>G2(Q#Kl%Sdm^tTU0waX~1n}nW^8wEU|IC;Oj{$20mH(rwwgHC<!$$w`aN$w%O6NxZ1sXRBWq$+!|BF!Y3Fc4X*8fn>#7^ZCuqppuYZ*mfVJ+DI76vCTM#GH_{{;~B!5~kjZvTW50pm|($szyv_YlxW3WAaUdTsXY^PYo||Aa)a1^*!BsQ+IJj;y1gs+a$$q_eKN17i9AmjWhy4o!zV|9p-<dWtVki~l)mix7fs$jkr9+GF=pycI+LQ}F@Z1pD^j|NRht9(3i$tN*F_YBm;}I(Pra9s=~S0WL`YM+GYdCj~nN|4jut1p@^!1^+n(O9dMROa=c#1qKCH1tJCi1qBENPX#yy{}Tl%1vdpX1^*}o3<Wd=3I+cQ1rG%?1x5w`KLt(&ECn(J{|yBK1yu!71^+z-Bn2)77X|+i1px&d1wIA;NCi{{HU%XG|3?K;1sMfI1^+Mw2L(z66b1iD1sw$~1rY`R7zG{$2?at0{~84n1u6vuYX1@fFbV-G5(NJ+3Iiz;1~3Z#6MzT_3I`?<3jZ()2_zB>Fbe+*BLxl#0SyKJA}I|QIS~>N|1dE)4>2Y)4gU}o2`3^aEeHPu5El{>Fflp*5iu}6CqF+b|0@C@F((lxBmM(H5f>5^FaZ<)2@)1C3Kbj&{{#{i5*RQ67yk+p8ZZbJ88QDpJU0h90RcJR0R%Y#0|TK29RCRc8wmv-2@3xm9TFfgEfpXCCkF)*7X=~-{|FT!GBpe(1^*-o3L`2ZGYx+zFCZTX5+(@1|0OdLC@=~qB>x2}2?{AE5-k5P3M(lgJq;-TB_JCZ20T73|1Kvf04NeLF#jzVFDfiQA{zfPD-tp=3Na)91vCi?GbSNE?+-2#HVD8qGZOtG1YkEQ2Lu!s{}~qrISBzc4gVz_7!?LNK05z9O%WA1BMBD&B@#U_2pBvy|0Nm~5(YLtKL0-#G(r?d5<&kk4GcgT2_7cD5<@TnLJb(A4*vy32?|6a5=Z|qEgD8F2L%^j6$b(q7YN}Z2;lz!02KfNNDc+x4h0qk6+VDG1^+<>9|a}_Qw9Go1tA4c1tSIjARGk(2>}5I{{;jI2onP?0RI987!M-^K>+_JA_5Kx2n;#@B?$!v2>}HQ{}Ko=2p0!31>Xt@0SOE>;0PH13o{TY0GuWO@0SM!6b^tB7ZcwWJ3kpN3Bm{x{|+z+6b&x`1OEpW4<rc~Bm(~_2@U`N2>}3eNEJ_}PN6^rMH7U66Hr_kC?Gj8M?n7w69FzBEfo~s5F#Nr2LfUQF#it&3lbR|CoO*y87Lt<2PjH__W=b46rmCaEhqmV03jVX0~#3pF9(DpH47#OC{H0Y2Pq<e2w)}(;eH5Y8Vnd486q13{RbC-2onn~Cn5e$0S^}tBquQ;`v5l~1q}%S3=8`b4<P^!G6fL{UjYyd5)(Aw5+M>@FA5?E5)~l;6d?is7!M>41qc}_e*!284I~sC4j<zQ1r8rCC=MJO8O<L60|@{C'
+'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~'
+
+[итого читаемых: 31]
+
+
+Бинарные константы (3-й слой, шифруются в рантайме VM):
+'\x80'
+
+[итого бинарных: 1]

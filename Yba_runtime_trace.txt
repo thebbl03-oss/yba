@@ -1,0 +1,68 @@
+Yba (== Ybaa, MD5 8fec3a629049908a7c10d2883a3df78f) — RUNTIME TRACE
+======================================================================
+
+Среда: песочница Lua 5.1 (lupa) + окружение executor-типа
+  (game/task/syn/Drawing как цепочечные прокси, unknown globals -> nil).
+Анти-песочница MoonSec V3 преодолена (см. README, раздел Yba).
+
+СТАТУС: VM выполнился ПОЛНОСТЬЮ, без ошибок (ok=true).
+
+--- ПОВЕДЕНИЕ (зафиксировано исполнением) ---
+  print("Troll protection initialized.")
+  task.spawn(function() ... end)
+  game:GetService("Players")
+  game:GetService("Players").LocalPlayer.Character
+       :WaitForChild("Humanoid", 10)
+  -> далее вечный цикл ожидания (task.wait). Stage-2 из сети НЕ грузился
+     (loadstring/HttpGet не вызывались: LOG.loads = 0).
+  ВЫВОД: Yba — тролл-скрипт (тот же паттерн, что MethionV2 "Troll.").
+
+--- РАСШИФРОВКА КОНСТАНТ (runtime) ---
+  захвачено строк (string.char/table.concat): 6648
+  уникальных: 6468, читаемых: 2337
+  строк payload (без внутренних имён VM): 2316
+
+--- КЛЮЧЕВЫЕ СТРОКИ PAYLOAD ---
+  'Tamper Detected!'                       ДА
+  'Troll protection initialized.'          ДА (напечатана в stdout)
+  'loadstring'                             ДА
+  'HttpGet'                                ДА
+  'gethui'                                 ДА
+  'syn'                                    ДА
+  'TweenInfo'                              ДА
+  'Color3'                                 ДА
+  'GetService'                             ДА
+  'WaitForChild'                           ДА
+  'Disconnect'                             ДА
+  'NextInteger'                            ДА
+  'NextNumber'                             ДА
+  'setmetatable'                           ДА
+  '__metatable'                            ДА
+  'tostring'                               ДА
+  'tonumber'                               ДА
+  'workspace'                              ДА
+  'Instance'                               ДА
+  'NumberSequence'                         ДА
+  'NumberSequenceKeypoint'                 ДА
+  'math'                                   ДА
+  'random'                                 ДА
+  'task'                                   ДА
+  'Players'                                нет
+  'LocalPlayer'                            нет
+  'Character'                              нет
+  'Humanoid'                               нет
+  'game'                                   ДА
+  'print'                                  ДА
+  'pcall'                                  ДА
+  'error'                                  ДА
+  'utf8'                                   ДА
+
+--- ЧИТ-ИНДИКАТОРЫ (ESP/Aimbot/GUI/автофарм) ---
+  НЕ ОБНАРУЖЕНЫ ни в одной расшифрованной строке.
+  Индикаторы из слоя-1 (Drawing/Square/Text/Line, TweenInfo, UDim2...)
+  относятся к коду, который в среде без настоящего executor не исполняется.
+
+--- ВНУТРЕННИЕ ГЛОБАЛИ VM (слоты-кэши, читались во время работы) ---
+  CiRyqfejzZw64, DUbYKwGDKU4gH, L61x83ByN3ZXZ, M5Pe6KsM21RkM, NoG5IOCJshWNO, PHwXSoodV1ZsH, S1SAlDeeEo6yF, ScTfBrCxeNvRo, UN5YpdFYiOqBo, YEh9Jfg77MjTC, aARN6UAZfjFIw, aVz3WGxXC6Z8T, aum51oFTCDlEl, ewqTlKNYEtsR6, jXeLc3kOH8DFQ, liXRTs2olsq4k, qXWGwBnPreVBe, rwunC3zT1BVo5, uBXnvnjSt4Q3H, wmO73hLnGK6yQ
+  (всего 21; liXRTs2olsq4k — кэш состояния диспатчера VM,
+   читался ~60000 раз за прогон)

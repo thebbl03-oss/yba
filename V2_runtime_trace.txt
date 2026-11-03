@@ -1,0 +1,25 @@
+V2 — RUNTIME TRACE (полный прогон, анти-песочница снята)
+======================================================================
+
+Среда: та же, что для Yba (nil-семантика + executor-окружение).
+СТАТУС: VM выполнился ПОЛНОСТЬЮ (ok=true, ошибок 0).
+
+--- ПОВЕДЕНИЕ ---
+  print("Troll protection initialized.")
+  game:GetService("Players").LocalPlayer.Character
+       :WaitForChild("Humanoid", 10)
+  -> вечный цикл task.wait; Stage-2 из сети НЕ грузился (loads=0).
+  ВЫВОД: V2 — ТРОЛЛ-СКРИПТ (тот же паттерн: Yba/Ybaa, MethionV2).
+
+--- РАСШИФРОВКА КОНСТАНТ ---
+  строк захвачено: 6097, уникальных: 6046, payload: 1899
+  Ключевые: Tamper Detected!, loadstring, HttpGet, GetService,
+            WaitForChild, setmetatable, __metatable, getfenv...
+  ЧИТ-ИНДИКАТОРЫ (ESP/Aimbot/GUI/автофарм): НЕ ОБНАРУЖЕНЫ.
+
+--- ИТОГ ПО ВСЕМУ АРХИВУ (4 уникальных файла) ---
+  Yba = Ybaa : тролл ("Troll protection initialized.", Humanoid)
+  V2         : тролл (идентичное поведение)
+  MethionV2  : тролл ("Troll.", Humanoid)
+  ServHopper : не исполнился до конца (анти-не-Roblox защита;
+               SHA-256-проверки целостности, TeleportService-паттерн)
