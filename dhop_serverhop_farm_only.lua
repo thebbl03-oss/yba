@@ -3,7 +3,11 @@
     Оставлено: UI, AFK-автофарм, авто-продажа, авто-закупка Lucky Arrow,
     быстрый вход в игру, авто-реджойн после кика, серверхоп,
     конвертация конфет (вкладка Halloween Event: авто-сбор конфет,
-    авто-сдача Джеку — порог 20, включена по умолчанию).
+    авто-сдача Джеку — порог 20, включена по умолчанию;
+    кнопка Convert All Candy на вкладке Selling).
+    Оптимизировано: поиск цели без sqrt и лишних аллокаций, кэш владельцев
+    предметов, noclip без пересканирования, подсчёт конфет/инвентаря
+    в один проход, кэш очков Джека.
     Вырезано: ESP, телепорты, троллинг, погода, Auto Prestige, Quest Farm,
     Misc-движение, вкладка Shop, Player Info, скины, низкая графика.
 ]]
@@ -990,18 +994,25 @@ end
 local ItemESP = {}
 
 function ItemESP.isPlayerOwned(obj, part)
-    local candidates = {part, obj}
+    local checkObj = obj ~= nil and obj ~= part
+    if not part and not checkObj then return false end
     for _, player in ipairs(Players:GetPlayers()) do
         local character = player.Character
         local backpack = player:FindFirstChild("Backpack")
-        for _, candidate in ipairs(candidates) do
-            if candidate and candidate.Parent then
-                if character and candidate:IsDescendantOf(character) then
-                    return true
-                end
-                if backpack and candidate:IsDescendantOf(backpack) then
-                    return true
-                end
+        if part and part.Parent then
+            if character and part:IsDescendantOf(character) then
+                return true
+            end
+            if backpack and part:IsDescendantOf(backpack) then
+                return true
+            end
+        end
+        if checkObj and obj.Parent then
+            if character and obj:IsDescendantOf(character) then
+                return true
+            end
+            if backpack and obj:IsDescendantOf(backpack) then
+                return true
             end
         end
     end
@@ -1170,7 +1181,23 @@ end
 function Selling.updateItems()
     table.clear(items)
     for name in pairs(maxLimits) do
-        items[name] = MSH.countInventoryName(name)
+        items[name] = 0
+    end
+    local character = LP.Character
+    local backpack = LP:FindFirstChild("Backpack")
+    if character then
+        for _, object in ipairs(character:GetChildren()) do
+            if object:IsA("Tool") and maxLimits[object.Name] then
+                items[object.Name] += 1
+            end
+        end
+    end
+    if backpack then
+        for _, object in ipairs(backpack:GetChildren()) do
+            if object:IsA("Tool") and maxLimits[object.Name] then
+                items[object.Name] += 1
+            end
+        end
     end
     return items
 end
@@ -1667,11 +1694,24 @@ LP.CharacterAdded:Connect(MSH.connectCharacterInventory)
 
 function Selling.hasMaxedItems()
     if not autoSellMax then return false end
-    for name, limit in pairs(maxLimits) do
-        if limit and Selling.allowed(name) and MSH.countInventoryName(name) >= limit then
-            return true
+    local counts = {}
+    local character = LP.Character
+    local backpack = LP:FindFirstChild("Backpack")
+    local function reachedLimit(container)
+        for _, object in ipairs(container:GetChildren()) do
+            if object:IsA("Tool") then
+                local limit = maxLimits[object.Name]
+                if limit and Selling.allowed(object.Name) then
+                    local count = (counts[object.Name] or 0) + 1
+                    counts[object.Name] = count
+                    if count >= limit then return true end
+                end
+            end
         end
+        return false
     end
+    if character and reachedLimit(character) then return true end
+    if backpack and reachedLimit(backpack) then return true end
     return false
 end
 
@@ -2397,15 +2437,11 @@ function Farm.allowed(name)
     return false
 end
 
-local FARM_PRIORITY = {"Lucky Arrow", "Lucky Stone Mask", "Christmas Present"}
-
-function Farm.priority(name)
-    if not Farm.allowed(name) then return false end
-    for _, n in ipairs(FARM_PRIORITY) do
-        if n == name then return true end
-    end
-    return false
-end
+local FARM_PRIORITY_SET = {
+    ["Lucky Arrow"] = true,
+    ["Lucky Stone Mask"] = true,
+    ["Christmas Present"] = true,
+}
 
 function Farm.nearest()
     local char = LP.Character
@@ -2429,23 +2465,26 @@ function Farm.nearest()
     end
 
     for part, data in pairs(Tracked) do
-        if part and part:IsDescendantOf(workspace) and Utils.validPos(part)
-            and not ItemESP.isPlayerOwned(data.Obj, part)
-            and not Utils.invisible(part) and Farm.allowed(data.Name)
-            and (not data.FarmRetryAt or data.FarmRetryAt <= now) then
-            local distance = (part.Position - origin).Magnitude
-            local candidate = part:FindFirstAncestorOfClass("Model") or part
+        if part and part:IsDescendantOf(workspace)
+            and Farm.allowed(data.Name)
+            and (not data.FarmRetryAt or data.FarmRetryAt <= now)
+            and data.PlayerOwned ~= true
+            and Utils.validPos(part)
+            and not Utils.invisible(part)
+            and not ItemESP.isPlayerOwned(data.Obj, part) then
+            local delta = part.Position - origin
+            local distSq = delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z
 
-            if distance < nearestDist then
-                nearestDist = distance
-                nearest = candidate
+            if distSq < nearestDist then
+                nearestDist = distSq
+                nearest = part:FindFirstAncestorOfClass("Model") or part
                 nearestPart = part
                 nearestData = data
             end
 
-            if Farm.priority(data.Name) and distance < priorityDist then
-                priorityDist = distance
-                priorityItem = candidate
+            if FARM_PRIORITY_SET[data.Name] and distSq < priorityDist then
+                priorityDist = distSq
+                priorityItem = part:FindFirstAncestorOfClass("Model") or part
                 priorityPart = part
                 priorityData = data
             end
@@ -3187,13 +3226,40 @@ end
 
 local Loops = {}
 
+local noclipCharacter = nil
+local noclipParts = {}
+local noclipAddedConn = nil
+local noclipRemovingConn = nil
+
 function Loops.noclip()
     RunService.Stepped:Connect(function()
         if not State.NoClip then return end
         local char = LP.Character
         if not char then return end
-        for _, p in ipairs(char:GetDescendants()) do
-            if p:IsA("BasePart") then p.CanCollide = false end
+        if noclipCharacter ~= char then
+            noclipCharacter = char
+            if noclipAddedConn then pcall(function() noclipAddedConn:Disconnect() end) end
+            if noclipRemovingConn then pcall(function() noclipRemovingConn:Disconnect() end) end
+            table.clear(noclipParts)
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then table.insert(noclipParts, p) end
+            end
+            noclipAddedConn = char.DescendantAdded:Connect(function(p)
+                if p:IsA("BasePart") then table.insert(noclipParts, p) end
+            end)
+            noclipRemovingConn = char.DescendantRemoving:Connect(function(p)
+                if p:IsA("BasePart") then
+                    for i = #noclipParts, 1, -1 do
+                        if noclipParts[i] == p then
+                            table.remove(noclipParts, i)
+                            break
+                        end
+                    end
+                end
+            end)
+        end
+        for i = 1, #noclipParts do
+            noclipParts[i].CanCollide = false
         end
     end)
 end
@@ -3225,9 +3291,12 @@ function Loops.trackedCleanup()
                     ItemESP.unregister(part)
                 elseif ItemESP.isPlayerOwned(data.Obj or part, part) then
                     data.PlayerOwned = true
-                elseif not Utils.validPos(part) then
-                    ItemESP.unregister(part)
-                    table.insert(Pending, {obj = data.Obj or part, part = part, name = data.Name})
+                else
+                    data.PlayerOwned = nil
+                    if not Utils.validPos(part) then
+                        ItemESP.unregister(part)
+                        table.insert(Pending, {obj = data.Obj or part, part = part, name = data.Name})
+                    end
                 end
             end
         end
@@ -4295,19 +4364,33 @@ local Halloween = {
     StatusLabel = nil,
     PointsLabel = nil,
     CachedJackPoints = nil,
+    PointsValue = nil,
 }
 
-local HALLOWEEN_CANDY_NAMES = {
-    "Green Candy",
-    "Red Candy",
-    "Blue Candy",
-    "Yellow Candy",
+local HALLOWEEN_CANDY_LOOKUP = {
+    ["Green Candy"] = true,
+    ["Red Candy"] = true,
+    ["Blue Candy"] = true,
+    ["Yellow Candy"] = true,
 }
 
 function Halloween.countCandies()
     local total = 0
-    for _, candyName in ipairs(HALLOWEEN_CANDY_NAMES) do
-        total += MSH.countInventoryName(candyName)
+    local character = LP.Character
+    local backpack = LP:FindFirstChild("Backpack")
+    if character then
+        for _, object in ipairs(character:GetChildren()) do
+            if object:IsA("Tool") and HALLOWEEN_CANDY_LOOKUP[object.Name] then
+                total += 1
+            end
+        end
+    end
+    if backpack then
+        for _, object in ipairs(backpack:GetChildren()) do
+            if object:IsA("Tool") and HALLOWEEN_CANDY_LOOKUP[object.Name] then
+                total += 1
+            end
+        end
     end
     return total
 end
@@ -4329,37 +4412,64 @@ function Halloween.captureJackPoints(gui)
     return true
 end
 
-function Halloween.readJackPoints()
-    local aliases = {
-        jackpoints = 120,
-        halloweenpoints = 115,
-        candypoints = 110,
-        pumpkinpoints = 105,
-        eventpoints = 100,
-        trickortreatpoints = 98,
-        jackpoint = 95,
-        halloweenpoint = 94,
-        candypoint = 93,
-        pumpkinpoint = 92,
-        eventpoint = 91,
-        halloweencurrency = 85,
-        candycurrency = 84,
-        eventcurrency = 83,
-        jackcurrency = 82,
-        trickortreatcurrency = 80,
-        halloweentokens = 75,
-        candytokens = 74,
-        jacktokens = 73,
-    }
+local HALLOWEEN_POINTS_ALIASES = {
+    jackpoints = 120,
+    halloweenpoints = 115,
+    candypoints = 110,
+    pumpkinpoints = 105,
+    eventpoints = 100,
+    trickortreatpoints = 98,
+    jackpoint = 95,
+    halloweenpoint = 94,
+    candypoint = 93,
+    pumpkinpoint = 92,
+    eventpoint = 91,
+    halloweencurrency = 85,
+    candycurrency = 84,
+    eventcurrency = 83,
+    jackcurrency = 82,
+    trickortreatcurrency = 80,
+    halloweentokens = 75,
+    candytokens = 74,
+    jacktokens = 73,
+}
 
-    local function normalize(value)
-        return string.lower(tostring(value or "")):gsub("[^%w]", "")
+local HALLOWEEN_SCAN_ROOT_NAMES = {"PlayerStats", "leaderstats", "Stats", "Data"}
+
+local function halloweenNormalize(value)
+    return string.lower(tostring(value or "")):gsub("[^%w]", "")
+end
+
+function Halloween.formatPoints(bestValue)
+    local numeric = tonumber(bestValue)
+    if numeric then
+        local rounded = math.floor(numeric)
+        local formatted = tostring(rounded)
+        while true do
+            local replaced, count = formatted:gsub("^(%-?%d+)(%d%d%d)", "%1,%2")
+            formatted = replaced
+            if count == 0 then break end
+        end
+        return formatted
+    end
+    return tostring(bestValue)
+end
+
+function Halloween.readJackPoints()
+    -- points captured from Jack's dialogue always win; skip the stat scan
+    if Halloween.CachedJackPoints ~= nil then
+        return Halloween.formatPoints(Halloween.CachedJackPoints)
     end
 
-    local bestValue = Halloween.CachedJackPoints
-    local bestScore = bestValue ~= nil and 1000 or -1
+    -- cached stat instance still alive: read its current value directly
+    local cachedStat = Halloween.PointsValue
+    if cachedStat and cachedStat.Parent then
+        return Halloween.formatPoints(cachedStat.Value)
+    end
+
+    local bestValue, bestScore, bestObject = nil, -1, nil
     local scanRoots = {LP}
-    for _, rootName in ipairs({"PlayerStats", "leaderstats", "Stats", "Data"}) do
+    for _, rootName in ipairs(HALLOWEEN_SCAN_ROOT_NAMES) do
         local root = LP:FindFirstChild(rootName)
         if root then table.insert(scanRoots, root) end
     end
@@ -4370,13 +4480,13 @@ function Halloween.readJackPoints()
             seen[root] = true
             for _, obj in ipairs(root:GetDescendants()) do
                 if obj:IsA("ValueBase") then
-                    local key = normalize(obj.Name)
-                    local score = aliases[key]
+                    local key = halloweenNormalize(obj.Name)
+                    local score = HALLOWEEN_POINTS_ALIASES[key]
                     if not score and key:find("point", 1, true) then
                         local ancestor = obj.Parent
                         local eventContext = false
                         while ancestor and ancestor ~= root do
-                            local contextName = normalize(ancestor.Name)
+                            local contextName = halloweenNormalize(ancestor.Name)
                             if contextName:find("jack", 1, true)
                                 or contextName:find("halloween", 1, true)
                                 or contextName:find("candy", 1, true)
@@ -4393,6 +4503,7 @@ function Halloween.readJackPoints()
                     if score and score > bestScore then
                         bestScore = score
                         bestValue = obj.Value
+                        bestObject = obj
                     end
                 end
             end
@@ -4400,28 +4511,18 @@ function Halloween.readJackPoints()
     end
 
     for name, value in pairs(LP:GetAttributes()) do
-        local key = normalize(name)
-        local score = aliases[key]
+        local key = halloweenNormalize(name)
+        local score = HALLOWEEN_POINTS_ALIASES[key]
         if score and score > bestScore then
             bestScore = score
             bestValue = value
+            bestObject = nil
         end
     end
 
-    if bestValue == nil then bestValue = Halloween.CachedJackPoints end
     if bestValue == nil then return nil end
-    local numeric = tonumber(bestValue)
-    if numeric then
-        local rounded = math.floor(numeric)
-        local formatted = tostring(rounded)
-        while true do
-            local replaced, count = formatted:gsub("^(%-?%d+)(%d%d%d)", "%1,%2")
-            formatted = replaced
-            if count == 0 then break end
-        end
-        return formatted
-    end
-    return tostring(bestValue)
+    if bestObject then Halloween.PointsValue = bestObject end
+    return Halloween.formatPoints(bestValue)
 end
 
 function MSH.halloweenNotify(title, message, notificationType)
@@ -5022,6 +5123,18 @@ SellTab:Button({
     Icon = "shopping-cart",
     Callback = function()
         task.spawn(Selling.sellInventory)
+    end,
+})
+SellTab:Divider()
+SellTab:Button({
+    Title = "Convert All Candy",
+    Desc = "Turn in all Halloween candy to Jack for points.",
+    Icon = "candy",
+    Callback = function()
+        task.spawn(function()
+            local success, message = MSH.turnInHalloweenCandies()
+            MSH.halloweenNotify("Halloween Event", message, success and "Success" or "Warning")
+        end)
     end,
 })
 
