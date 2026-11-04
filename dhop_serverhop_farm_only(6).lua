@@ -17,7 +17,7 @@ local PhysicsService = game:GetService("PhysicsService")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 
-local METHIONSH_RAW_URL = "https://raw.githubusercontent.com/thebbl03-oss/yba/refs/heads/main/dhop_serverhop_farm_only.lua"
+local METHIONSH_RAW_URL = "https://raw.githubusercontent.com/thebbl03-oss/yba/refs/heads/main/dhop_serverhop_farm_only(6).lua"
 local MethionSH_Env = type(getgenv) == "function" and getgenv() or _G
 local MSH = type(MethionSH_Env.__MethionSHRuntime) == "table" and MethionSH_Env.__MethionSHRuntime or {}
 MethionSH_Env.__MethionSHRuntime = MSH
