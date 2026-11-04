@@ -8,6 +8,9 @@
     Оптимизировано: поиск цели без sqrt и лишних аллокаций, кэш владельцев
     предметов, noclip без пересканирования, подсчёт конфет/инвентаря
     в один проход, кэш очков Джека.
+    Надёжность хоппа: повторный заход на старый сервер больше не блокирует
+    запуск (детект живого экземпляра по heartbeat), кэш UI-библиотеки и
+    самого скрипта между хоппами, ретраи загрузки и телепорта.
     Вырезано: ESP, телепорты, троллинг, погода, Auto Prestige, Quest Farm,
     Misc-движение, вкладка Shop, Player Info, скины, низкая графика.
 ]]
@@ -26,18 +29,60 @@ local MethionSH_Env = type(getgenv) == "function" and getgenv() or _G
 local MSH = type(MethionSH_Env.__MethionSHRuntime) == "table" and MethionSH_Env.__MethionSHRuntime or {}
 MethionSH_Env.__MethionSHRuntime = MSH
 local SH_SCRIPT_JOB_ID = tostring(game.JobId)
-if MethionSH_Env.__MethionSHLoadedJobId == SH_SCRIPT_JOB_ID then
-    MethionSH_Env.__MethionSHReady = true
-    warn("[MethionSH] Already loaded in this server; ignoring duplicate execution.")
-    return
+local SH_LOAD_STARTED_AT = tick()
+local function shInstanceAlive()
+    if MethionSH_Env.__MethionSHHeartbeatJob ~= SH_SCRIPT_JOB_ID then return false end
+    return tick() - (tonumber(MethionSH_Env.__MethionSHHeartbeat) or 0) < 20
 end
+if shInstanceAlive() then
+    local hbBefore = tonumber(MethionSH_Env.__MethionSHHeartbeat) or 0
+    local probeDeadline = tick() + 10
+    while tick() < probeDeadline do
+        task.wait(0.5)
+        if (tonumber(MethionSH_Env.__MethionSHHeartbeat) or 0) > hbBefore then break end
+    end
+    if (tonumber(MethionSH_Env.__MethionSHHeartbeat) or 0) > hbBefore then
+        if MethionSH_Env.__MethionSHLoadedJobId == SH_SCRIPT_JOB_ID then
+            MethionSH_Env.__MethionSHReady = true
+        end
+        warn("[MethionSH] Already loaded in this server; ignoring duplicate execution.")
+        return
+    end
+    warn("[MethionSH] Previous instance in this server stopped; loading a fresh copy.")
+end
+if MethionSH_Env.__MethionSHLoadedJobId == SH_SCRIPT_JOB_ID then
+    warn("[MethionSH] Stale load state from an earlier visit to this server; loading anyway.")
+end
+MethionSH_Env.__MethionSHLoadedJobId = nil
+MethionSH_Env.__MethionSHBootstrapActive = false
+MethionSH_Env.__MethionSHHeartbeat = SH_LOAD_STARTED_AT
+MethionSH_Env.__MethionSHHeartbeatJob = SH_SCRIPT_JOB_ID
 local SH_AUTOSTART = MethionSH_Env.__MethionSHAutoStart == true
 MethionSH_Env.__MethionSHReady = false
 
 local AIRFLOW_LIBRARY_URL = "https://raw.githubusercontent.com/thebbl03-oss/yba/refs/heads/main/graba"
+local function fetchAirflowLibrarySource()
+    for attempt = 1, 3 do
+        local ok, source = pcall(function()
+            return game:HttpGet(AIRFLOW_LIBRARY_URL)
+        end)
+        if ok and type(source) == "string" and #source > 0 then
+            MethionSH_Env.__MethionAirflowSourceCache = source
+            return source
+        end
+        warn("[Methion] Airflow library download failed (attempt " .. attempt .. "): " .. tostring(source))
+        task.wait(attempt)
+    end
+    local cachedSource = MethionSH_Env.__MethionAirflowSourceCache
+    if type(cachedSource) == "string" and #cachedSource > 0 then
+        warn("[Methion] Airflow download failed; reusing the cached library from a previous server.")
+        return cachedSource
+    end
+    return nil
+end
 local libraryOk, AirflowLibrary = pcall(function()
-    local source = game:HttpGet(AIRFLOW_LIBRARY_URL)
-    assert(type(source) == "string" and #source > 0, "The Airflow library returned an empty response")
+    local source = fetchAirflowLibrarySource()
+    assert(type(source) == "string" and #source > 0, "The Airflow library could not be downloaded and no cache was available")
 
     if not source:find("function Window:_revealCards", 1, true)
         and not source:find("function Window._revealCards", 1, true) then
@@ -585,7 +630,15 @@ end)
 
 if not bypassSupported then
     local fallbackOk, fallbackErr = pcall(function()
-        local fallbackSource = game:HttpGet("https://pastebin.com/raw/c9xy3XzA")
+        local fallbackSource = nil
+        for attempt = 1, 3 do
+            local ok, response = pcall(function() return game:HttpGet("https://pastebin.com/raw/c9xy3XzA") end)
+            if ok and type(response) == "string" and #response > 0 then
+                fallbackSource = response
+                break
+            end
+            task.wait(attempt)
+        end
         assert(type(fallbackSource) == "string" and #fallbackSource > 0, "Fallback script returned an empty response")
         local fallbackChunk, compileError = loadstring(fallbackSource)
         assert(type(fallbackChunk) == "function", compileError or "Fallback script could not be compiled")
@@ -3182,6 +3235,10 @@ function Rejoin.start()
                     local ok, hopped = pcall(function() return controller:hop() end)
                     if ok and hopped then return end
                 end
+                local rejoinUrl = type(MSH.resolvedMethionSHUrl) == "function" and MSH.resolvedMethionSHUrl() or nil
+                if rejoinUrl and type(MSH.queueNextRun) == "function" then
+                    pcall(function() MSH.queueNextRun(rejoinUrl, true) end)
+                end
                 pcall(function() TeleportService:Teleport(game.PlaceId, LP) end)
             end)
         end)
@@ -3268,6 +3325,8 @@ function Loops.farm()
     task.spawn(function()
         local lastFarmErrorAt = 0
         while true do
+            MethionSH_Env.__MethionSHHeartbeat = tick()
+            MethionSH_Env.__MethionSHHeartbeatJob = SH_SCRIPT_JOB_ID
             local ok, err = pcall(Farm.tick)
             if not ok and os.clock() - lastFarmErrorAt >= 5 then
                 lastFarmErrorAt = os.clock()
@@ -3460,7 +3519,12 @@ function MSH.getPublicServerCandidate()
             game.PlaceId,
             cursorArg
         )
-        local ok, response = pcall(function() return game:HttpGet(url) end)
+        local ok, response = false, nil
+        for listAttempt = 1, 2 do
+            ok, response = pcall(function() return game:HttpGet(url) end)
+            if ok and type(response) == "string" then break end
+            task.wait(1)
+        end
         if not ok or type(response) ~= "string" then
             warn("[MethionSH] Could not read the public server list: " .. tostring(response))
             break
@@ -3554,10 +3618,13 @@ function MSH.queueNextRun(url, autoStart)
         "repeat task.wait() until game:IsLoaded()",
         "local env = type(getgenv) == \"function\" and getgenv() or _G",
         "local jobKey = tostring(game.JobId)",
-        "if env.__MethionSHLoadedJobId == jobKey then return end",
-        "if env.__MethionSHBootstrapJob == jobKey and env.__MethionSHBootstrapActive == true then return end",
+        "if env.__MethionSHLoadedJobId == jobKey and env.__MethionSHReady == true and env.__MethionSHHeartbeatJob == jobKey and tick() - (tonumber(env.__MethionSHHeartbeat) or 0) < 20 then return end",
+        "if env.__MethionSHBootstrapJob == jobKey and env.__MethionSHBootstrapActive == true and tick() - (tonumber(env.__MethionSHBootstrapHeartbeat) or 0) < 12 then return end",
         "env.__MethionSHBootstrapJob = jobKey",
         "env.__MethionSHBootstrapActive = true",
+        "env.__MethionSHBootstrapHeartbeat = tick()",
+        "env.__MethionSHReady = false",
+        "_G.__MethionSHReady = false",
         "local http = game:GetService(\"HttpService\")",
         "local statsOk, stats = pcall(function() return http:JSONDecode(" .. string.format("%q", statsJson) .. ") end)",
         "if statsOk and type(stats) == \"table\" then env.__MethionSHStats = stats end",
@@ -3570,7 +3637,8 @@ function MSH.queueNextRun(url, autoStart)
         "if hopSettingsOk and type(hopSettings) == \"table\" then env.__MethionSHHopSettings = hopSettings end",
         "env.__MethionSHReloadOnKick = " .. tostring(Config.AutoRejoinEnabled == true),
         "env.__MethionSHAutoStart = " .. tostring(autoStart == true),
-        "env.__MethionSHVisitedJobs = http:JSONDecode(" .. string.format("%q", visitedJson) .. ")",
+        "local visitedOk, visitedList = pcall(function() return http:JSONDecode(" .. string.format("%q", visitedJson) .. ") end)",
+        "if visitedOk and type(visitedList) == \"table\" then env.__MethionSHVisitedJobs = visitedList end",
         "local Players = game:GetService(\"Players\")",
         "local ReplicatedStorage = game:GetService(\"ReplicatedStorage\")",
         "local Lighting = game:GetService(\"Lighting\")",
@@ -3587,11 +3655,12 @@ function MSH.queueNextRun(url, autoStart)
         "    local dof = Lighting:FindFirstChild(\"DepthOfField\"); if dof then dof:Destroy() end",
         "    local loading = workspace:FindFirstChild(\"LoadingScreen\"); local song = loading and loading:FindFirstChild(\"Song\"); if song then song:Destroy() end",
         "end",
-        "task.spawn(function() while true do pcall(enterGame); task.wait(3) end end)",
+        "task.spawn(function() while true do pcall(enterGame); if env.__MethionSHReady == true then return end; task.wait(3) end end)",
         "local deadline = os.clock() + 10",
         "local entered = false",
         "repeat",
         "    task.wait(0.1)",
+        "    env.__MethionSHBootstrapHeartbeat = tick()",
         "    local character = player.Character",
         "    local humanoid = character and character:FindFirstChildOfClass(\"Humanoid\")",
         "    local root = character and character:FindFirstChild(\"HumanoidRootPart\")",
@@ -3603,14 +3672,18 @@ function MSH.queueNextRun(url, autoStart)
         "    local retrySource = env.__MethionSHRecoverySource",
         "    if type(queueFn) == \"function\" and type(retrySource) == \"string\" then pcall(queueFn, retrySource) end",
         "    local targetId = nil",
+        "    local visitedList = type(env.__MethionSHVisitedJobs) == \"table\" and env.__MethionSHVisitedJobs or {}",
+        "    local function visitedServer(id) for _, visitedId in ipairs(visitedList) do if visitedId == id then return true end end return false end",
         "    local ok, response = pcall(function() return game:HttpGet(\"https://games.roblox.com/v1/games/\" .. tostring(game.PlaceId) .. \"/servers/Public?sortOrder=Asc&limit=100\") end)",
         "    if ok and type(response) == \"string\" then",
         "        local decodedOk, payload = pcall(function() return http:JSONDecode(response) end)",
         "        if decodedOk and type(payload) == \"table\" and type(payload.data) == \"table\" then",
         "            local candidates = {}",
-        "            for _, server in ipairs(payload.data) do local id = server.id; local playing = tonumber(server.playing) or math.huge; local maximum = tonumber(server.maxPlayers) or 0; if type(id) == \"string\" and id ~= \"\" and id ~= game.JobId and maximum > 0 and playing < maximum then table.insert(candidates, {id = id, playing = playing}) end end",
+        "            local freshCandidates = {}",
+        "            for _, server in ipairs(payload.data) do local id = server.id; local playing = tonumber(server.playing) or math.huge; local maximum = tonumber(server.maxPlayers) or 0; if type(id) == \"string\" and id ~= \"\" and id ~= game.JobId and maximum > 0 and playing < maximum then table.insert(candidates, {id = id, playing = playing}); if not visitedServer(id) then table.insert(freshCandidates, {id = id, playing = playing}) end end end",
+        "            table.sort(freshCandidates, function(a, b) return a.playing < b.playing end)",
         "            table.sort(candidates, function(a, b) return a.playing < b.playing end)",
-        "            if candidates[1] then targetId = candidates[1].id end",
+        "            if freshCandidates[1] then targetId = freshCandidates[1].id elseif candidates[1] then targetId = candidates[1].id end",
         "        end",
         "    end",
         "    local attempt = 0",
@@ -3634,25 +3707,35 @@ function MSH.queueNextRun(url, autoStart)
         "            if not callOk then failed = true end",
         "        end",
         "        local retryDeadline = os.clock() + 12",
-        "        while os.clock() < retryDeadline and not failed and not teleportStarted do task.wait(0.2) end",
+        "        while os.clock() < retryDeadline and not failed and not teleportStarted do task.wait(0.2); env.__MethionSHBootstrapHeartbeat = tick() end",
         "        if teleportConn then pcall(function() teleportConn:Disconnect() end) end",
         "        if failConn then pcall(function() failConn:Disconnect() end) end",
-        "        if teleportStarted and not failed then repeat task.wait(1) until game.JobId ~= jobKey end",
+        "        if teleportStarted and not failed then repeat task.wait(1); env.__MethionSHBootstrapHeartbeat = tick() until game.JobId ~= jobKey end",
         "        task.wait(1)",
         "    end",
         "end",
         "local mainUrl = " .. string.format("%q", url),
         "task.wait(0.75)",
-        "for attempt = 1, 3 do",
+        "for attempt = 1, 4 do",
         "    env.__MethionSHReady = false",
+        "    env.__MethionSHBootstrapHeartbeat = tick()",
         "    local fetchOk, source = pcall(function() return game:HttpGet(mainUrl) end)",
+        "    if not fetchOk or type(source) ~= \"string\" or #source == 0 then",
+        "        local cachedSource = env.__MethionSHSourceCache",
+        "        if type(cachedSource) == \"string\" and #cachedSource > 0 then",
+        "            source = cachedSource",
+        "            fetchOk = true",
+        "            warn(\"[MethionSH] Main script download failed; using the cached copy from a previous server.\")",
+        "        end",
+        "    end",
         "    if fetchOk and type(source) == \"string\" and #source > 0 then",
+        "        env.__MethionSHSourceCache = source",
         "        local chunk, compileError = loadstring(source)",
         "        if type(chunk) == \"function\" then",
         "            local ran, runError = pcall(chunk)",
         "            if not ran then warn(\"[MethionSH] Main script execution failed: \" .. tostring(runError)) end",
         "            local readyDeadline = os.clock() + 25",
-        "            repeat task.wait(0.2) until env.__MethionSHReady == true or os.clock() >= readyDeadline",
+        "            repeat task.wait(0.2); env.__MethionSHBootstrapHeartbeat = tick() until env.__MethionSHReady == true or os.clock() >= readyDeadline",
         "            if env.__MethionSHReady == true or _G.__MethionSHReady == true then env.__MethionSHReady = true; env.__MethionSHLoadedJobId = tostring(game.JobId); env.__MethionSHBootstrapActive = false; return end",
         "            warn(\"[MethionSH] Main script did not finish initialization on attempt \" .. tostring(attempt))",
         "        else",
@@ -3661,7 +3744,7 @@ function MSH.queueNextRun(url, autoStart)
         "    else",
         "        warn(\"[MethionSH] Could not fetch the main script: \" .. tostring(source))",
         "    end",
-        "    task.wait(attempt * 2)",
+        "    task.wait(math.min(attempt * 2, 8))",
         "end",
         "warn(\"[MethionSH] Script initialization failed after retries. Rejoining and retrying.\")",
         "while true do",
@@ -3678,10 +3761,10 @@ function MSH.queueNextRun(url, autoStart)
         "    local callOk = pcall(function() TeleportService:Teleport(game.PlaceId, player) end)",
         "    if not callOk then failed = true end",
         "    local retryDeadline = os.clock() + 12",
-        "    while os.clock() < retryDeadline and not failed and not teleportStarted do task.wait(0.2) end",
+        "    while os.clock() < retryDeadline and not failed and not teleportStarted do task.wait(0.2); env.__MethionSHBootstrapHeartbeat = tick() end",
         "    if teleportConn then pcall(function() teleportConn:Disconnect() end) end",
         "    if failConn then pcall(function() failConn:Disconnect() end) end",
-        "    if teleportStarted and not failed then repeat task.wait(1) until game.JobId ~= jobKey end",
+        "    if teleportStarted and not failed then repeat task.wait(1); env.__MethionSHBootstrapHeartbeat = tick() until game.JobId ~= jobKey end",
         "    task.wait(1)",
         "end",
         "",
@@ -3730,14 +3813,61 @@ function SHController:hop()
     end
 
     shTeleportPending = true
-    local ok, err = pcall(function()
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, target.id, LP)
-    end)
-    if not ok then
+    local hopStarted = false
+    for attempt = 1, 3 do
+        local failed = false
+        local started = false
+        local failConn, teleportConn
+        pcall(function()
+            failConn = TeleportService.TeleportInitFailed:Connect(function(failedPlayer)
+                if failedPlayer == LP then failed = true end
+            end)
+        end)
+        pcall(function()
+            teleportConn = LP.OnTeleport:Connect(function(state)
+                if state == Enum.TeleportState.Started or state == Enum.TeleportState.InProgress then
+                    started = true
+                elseif state == Enum.TeleportState.Failed then
+                    failed = true
+                end
+            end)
+        end)
+        local ok, err = pcall(function()
+            if attempt == 1 then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, target.id, LP)
+            else
+                TeleportService:Teleport(game.PlaceId, LP)
+            end
+        end)
+        if not ok then
+            failed = true
+            warn("[MethionSH] Server hop call failed: " .. tostring(err))
+        end
+        local hopDeadline = os.clock() + 12
+        while os.clock() < hopDeadline and not failed and not started do
+            task.wait(0.2)
+        end
+        if failConn then pcall(function() failConn:Disconnect() end) end
+        if teleportConn then pcall(function() teleportConn:Disconnect() end) end
+        if started and not failed then
+            hopStarted = true
+            break
+        end
+        if game.JobId ~= SH_SCRIPT_JOB_ID then
+            hopStarted = true
+            break
+        end
+        if not MSH.queueNextRun(url, true) then
+            break
+        end
+        warn("[MethionSH] Teleport did not start (attempt " .. attempt .. "); retrying the server hop.")
+        task.wait(1)
+    end
+    if not hopStarted then
         shTeleportPending = false
         SHStats.ServersHopped = previousHopCount
         SHStats.Status = "Retrying"
-        warn("[MethionSH] Server hop failed: " .. tostring(err))
+        warn("[MethionSH] Server hop failed after retries.")
         return false
     end
     return true
