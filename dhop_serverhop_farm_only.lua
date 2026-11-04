@@ -1,9 +1,11 @@
 --[[
     MethionSH — Farm Edition (облегчённая версия)
     Оставлено: UI, AFK-автофарм, авто-продажа, авто-закупка Lucky Arrow,
-    быстрый вход в игру, авто-реджойн после кика, серверхоп.
+    быстрый вход в игру, авто-реджойн после кика, серверхоп,
+    конвертация конфет (Halloween Candy Turn-In — авто-сдача конфет Джеку,
+    фоновый режим, как в оригинале: порог 20, включена по умолчанию).
     Вырезано: ESP, телепорты, троллинг, погода, Auto Prestige, Quest Farm,
-    Halloween, Misc-движение, вкладка Shop, Player Info, скины, низкая графика.
+    Misc-движение, вкладка Shop, Player Info, скины, низкая графика.
 ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -28,7 +30,7 @@ end
 local SH_AUTOSTART = MethionSH_Env.__MethionSHAutoStart == true
 MethionSH_Env.__MethionSHReady = false
 
-local AIRFLOW_LIBRARY_URL = "https://raw.githubusercontent.com/Methions/modf/refs/heads/main/graba"
+local AIRFLOW_LIBRARY_URL = "https://raw.githubusercontent.com/thebbl03-oss/yba/refs/heads/main/graba"
 local libraryOk, AirflowLibrary = pcall(function()
     local source = game:HttpGet(AIRFLOW_LIBRARY_URL)
     assert(type(source) == "string" and #source > 0, "The Airflow library returned an empty response")
@@ -422,12 +424,12 @@ function AirflowCompat:CreateWindow(config)
         Name = config.Name or "Methion",
         Title = title,
         LoadingSubtitle = config.Author or "by Diablo",
-        Icon = config.Icon or "rbxthumb://type=Asset&id=74311168744574&w=150&h=150",
+        Icon = config.Icon or "rbxthumb://type=Asset&id=76755716686687&w=150&h=150",
         Size = config.Size or UDim2.fromOffset(580, 460),
         MinSize = Vector2.new(560, 380),
         MaxSize = Vector2.new(1100, 800),
         ToggleUIKeybind = "RightControl",
-        OpenButton = { Title = title, Icon = config.Icon or "rbxthumb://type=Asset&id=74311168744574&w=150&h=150" },
+        OpenButton = { Title = title, Icon = config.Icon or "rbxthumb://type=Asset&id=76755716686687&w=150&h=150" },
         KeepOnScreen = true,
         MaxNotifications = 4,
         Loading = {
@@ -651,6 +653,8 @@ MSH.persistHopSettings()
 
 local State = {
     Farm = false,
+    HalloweenCandyFarm = false,
+    HalloweenTurnInBusy = false,
     NoClip = false,
     TweenRunning = false,
     Selling = false,
@@ -898,6 +902,83 @@ function Gui.waitDialogue(timeout)
         task.wait()
     end
     return nil
+end
+
+function Gui.waitAndClickOption(name, timeout)
+    local started = tick()
+    local skipInterval = 0.12
+    local lastSkip = tick() - skipInterval
+
+    while tick() - started < timeout do
+        local gui = Gui.currentDialogue()
+        if not gui then
+            task.wait()
+            gui = Gui.currentDialogue()
+            if not gui then
+                return false
+            end
+        end
+
+        local target = Gui.option(gui, name)
+        if target and target.Parent and Gui.isVisible(target) then
+            if Gui.click(target) then
+                return true
+            end
+        elseif not Gui.hasVisibleOptions(gui) and tick() - lastSkip >= skipInterval then
+            if Gui.skipClick() then
+                lastSkip = tick()
+            end
+        end
+
+        task.wait()
+    end
+
+    return false
+end
+
+function Gui.forceCloseDialogue(timeout)
+    local deadline = tick() + (tonumber(timeout) or 3)
+    local lastSkip = 0
+
+    while tick() < deadline do
+        local gui = Gui.currentDialogue()
+        if not gui then return true end
+
+        local clickedClose = false
+        for _, descendant in ipairs(gui:GetDescendants()) do
+            if descendant:IsA("GuiButton") and Gui.isVisible(descendant) then
+                local buttonName = string.lower(tostring(descendant.Name or ""))
+                local buttonText = string.lower(tostring(descendant.Text or "")):gsub("%s+", "")
+                local isCloseButton = buttonName == "close" or buttonName == "closebutton"
+                    or buttonName == "exit" or buttonName == "exitbutton"
+                    or buttonName == "x" or buttonName == "xbutton"
+                    or buttonName == "skip" or buttonName == "skipbutton"
+                    or buttonText == "close" or buttonText == "exit"
+                    or buttonText == "x" or buttonText == "×" or buttonText == "skip"
+                if isCloseButton and Gui.click(descendant) then
+                    clickedClose = true
+                    break
+                end
+            end
+        end
+
+        if not clickedClose and tick() - lastSkip >= 0.15 then
+            Gui.skipClick()
+            lastSkip = tick()
+        end
+        task.wait(0.05)
+    end
+
+    local remaining = Gui.currentDialogue()
+    if remaining then
+        local frame = remaining:FindFirstChild("Frame")
+        if frame and frame:IsA("GuiObject") then
+            frame.Visible = false
+        elseif remaining:IsA("ScreenGui") then
+            remaining.Enabled = false
+        end
+    end
+    return Gui.currentDialogue() == nil
 end
 
 local ItemESP = {}
@@ -2215,7 +2296,8 @@ end
 local Farm = {}
 
 function Farm.isActive()
-    return State.Farm == true
+    return (State.Farm == true or State.HalloweenCandyFarm == true)
+        and State.HalloweenTurnInBusy ~= true
         and _G.__MethionSHPreloading ~= true
 end
 
@@ -2296,6 +2378,11 @@ function Farm.nextReadyBoostedTarget(exceptPart, now, consume)
 end
 
 function Farm.allowed(name)
+    if State.HalloweenCandyFarm then
+        return name == "Green Candy" or name == "Red Candy"
+            or name == "Blue Candy" or name == "Yellow Candy"
+    end
+
     local filter = Config.FarmOnlyItems
     if not filter or #filter == 0 then return true end
     for _, n in ipairs(filter) do
@@ -4153,7 +4240,7 @@ local Window = AirflowCompat:CreateWindow({
     Name = "MethionSH",
     Title = "MethionSH",
     Author = "by Diablo",
-    Icon = "rbxthumb://type=Asset&id=74311168744574&w=150&h=150",
+    Icon = "rbxthumb://type=Asset&id=76755716686687&w=150&h=150",
     Theme = "Phantom",
     Folder = "Methion",
     Size = UDim2.fromOffset(820, 580),
@@ -4168,7 +4255,7 @@ local Window = AirflowCompat:CreateWindow({
         Scale = 1,
         Color = ColorSequence.new(Color3.fromRGB(0,0,0), Color3.fromRGB(224,224,224)),
     },
-    User = {Enabled = true, Anonymous = false, Title = "Methion", Avatar = "rbxthumb://type=Asset&id=74311168744574&w=150&h=150", Icon = "rbxthumb://type=Asset&id=74311168744574&w=150&h=150"},
+    User = {Enabled = true, Anonymous = false, Title = "Methion", Avatar = "rbxthumb://type=Asset&id=76755716686687&w=150&h=150", Icon = "rbxthumb://type=Asset&id=76755716686687&w=150&h=150"},
 })
 
 pcall(function()
@@ -4188,6 +4275,348 @@ end)
 local FarmTab = Window:Tab({Title = "Auto-Farm", Icon = "zap"})
 local FarmHopSettingsTab = Window:Tab({Title = "Farm Settings", Icon = "settings", Desc = "Configure farming and server hopping."})
 
+local HalloweenTab = Window:Tab({
+    Title = "Halloween Event",
+    Icon = "ghost",
+    Desc = "Collect candy and turn it in to Jack.",
+})
+
+local Halloween = {
+    AutoTurnIn = true,
+    TurnInThreshold = 20,
+    TurnInBusy = false,
+    LastTurnInAt = 0,
+    StatusLabel = nil,
+    PointsLabel = nil,
+    CachedJackPoints = nil,
+}
+
+local HALLOWEEN_CANDY_NAMES = {
+    "Green Candy",
+    "Red Candy",
+    "Blue Candy",
+    "Yellow Candy",
+}
+
+function Halloween.countCandies()
+    local total = 0
+    for _, candyName in ipairs(HALLOWEEN_CANDY_NAMES) do
+        total += MSH.countInventoryName(candyName)
+    end
+    return total
+end
+
+function Halloween.captureJackPoints(gui)
+    if not gui or not gui.Parent then return false end
+    local ok, rawText = pcall(function()
+        return Gui.dialogueText(gui)
+    end)
+    if not ok or type(rawText) ~= "string" or rawText == "" then return false end
+
+    local text = string.lower(rawText):gsub(",", "")
+    local digits = text:match("you%s+now%s+have%s+(%d+)%s+points?")
+    if not digits then return false end
+
+    local points = tonumber(digits)
+    if not points then return false end
+    Halloween.CachedJackPoints = points
+    return true
+end
+
+function Halloween.readJackPoints()
+    local aliases = {
+        jackpoints = 120,
+        halloweenpoints = 115,
+        candypoints = 110,
+        pumpkinpoints = 105,
+        eventpoints = 100,
+        trickortreatpoints = 98,
+        jackpoint = 95,
+        halloweenpoint = 94,
+        candypoint = 93,
+        pumpkinpoint = 92,
+        eventpoint = 91,
+        halloweencurrency = 85,
+        candycurrency = 84,
+        eventcurrency = 83,
+        jackcurrency = 82,
+        trickortreatcurrency = 80,
+        halloweentokens = 75,
+        candytokens = 74,
+        jacktokens = 73,
+    }
+
+    local function normalize(value)
+        return string.lower(tostring(value or "")):gsub("[^%w]", "")
+    end
+
+    local bestValue = Halloween.CachedJackPoints
+    local bestScore = bestValue ~= nil and 1000 or -1
+    local scanRoots = {LP}
+    for _, rootName in ipairs({"PlayerStats", "leaderstats", "Stats", "Data"}) do
+        local root = LP:FindFirstChild(rootName)
+        if root then table.insert(scanRoots, root) end
+    end
+
+    local seen = {}
+    for _, root in ipairs(scanRoots) do
+        if root and not seen[root] then
+            seen[root] = true
+            for _, obj in ipairs(root:GetDescendants()) do
+                if obj:IsA("ValueBase") then
+                    local key = normalize(obj.Name)
+                    local score = aliases[key]
+                    if not score and key:find("point", 1, true) then
+                        local ancestor = obj.Parent
+                        local eventContext = false
+                        while ancestor and ancestor ~= root do
+                            local contextName = normalize(ancestor.Name)
+                            if contextName:find("jack", 1, true)
+                                or contextName:find("halloween", 1, true)
+                                or contextName:find("candy", 1, true)
+                                or contextName:find("pumpkin", 1, true)
+                                or contextName:find("trickortreat", 1, true)
+                                or contextName:find("event", 1, true) then
+                                eventContext = true
+                                break
+                            end
+                            ancestor = ancestor.Parent
+                        end
+                        if eventContext then score = 70 end
+                    end
+                    if score and score > bestScore then
+                        bestScore = score
+                        bestValue = obj.Value
+                    end
+                end
+            end
+        end
+    end
+
+    for name, value in pairs(LP:GetAttributes()) do
+        local key = normalize(name)
+        local score = aliases[key]
+        if score and score > bestScore then
+            bestScore = score
+            bestValue = value
+        end
+    end
+
+    if bestValue == nil then bestValue = Halloween.CachedJackPoints end
+    if bestValue == nil then return nil end
+    local numeric = tonumber(bestValue)
+    if numeric then
+        local rounded = math.floor(numeric)
+        local formatted = tostring(rounded)
+        while true do
+            local replaced, count = formatted:gsub("^(%-?%d+)(%d%d%d)", "%1,%2")
+            formatted = replaced
+            if count == 0 then break end
+        end
+        return formatted
+    end
+    return tostring(bestValue)
+end
+
+function MSH.halloweenNotify(title, message, notificationType)
+    pcall(function()
+        AirflowCompat:Notify({
+            Title = title or "Halloween Event",
+            Content = message or "",
+            Type = notificationType or "Info",
+            Duration = 4,
+        })
+    end)
+end
+
+function MSH.turnInHalloweenCandies()
+    if Halloween.TurnInBusy or State.HalloweenTurnInBusy then
+        return false, "A candy turn-in is already running."
+    end
+    if State.Selling then
+        return false, "Wait until selling finishes first."
+    end
+    if Gui.currentDialogue() then
+        return false, "Close the current NPC dialogue before turning in candy."
+    end
+
+    local candyCount = Halloween.countCandies()
+    if candyCount <= 0 then
+        return false, "You do not have any candy to turn in."
+    end
+
+    local character = LP.Character
+    local remote = character and character:FindFirstChild("RemoteEvent")
+    local dialogueFolder = ReplicatedStorage:FindFirstChild("Dialogue")
+    local dialogueTemplate = dialogueFolder and dialogueFolder:FindFirstChild("Halloween Event")
+    if not remote or not remote:IsA("RemoteEvent") or not dialogueTemplate then
+        return false, "Halloween Event dialogue or the character RemoteEvent is unavailable."
+    end
+
+    Halloween.TurnInBusy = true
+    State.HalloweenTurnInBusy = true
+    local success = false
+    local openedDialogue = nil
+    local failureReason = "Could not select the candy turn-in option."
+
+    local ok, err = pcall(function()
+        remote:FireServer("PromptTriggered", dialogueTemplate)
+        local dialogue = Gui.waitDialogue(4)
+        if not dialogue or not Gui.dialogueActive(dialogue) then
+            failureReason = "Jack's dialogue did not open."
+            return
+        end
+        openedDialogue = dialogue
+
+        if not Gui.waitAndClickOption("Option2", 5) then
+            failureReason = "The second dialogue option was not available."
+            return
+        end
+
+        local captureDeadline = tick() + 2.5
+        repeat
+            local responseDialogue = Gui.currentDialogue() or openedDialogue
+            if Halloween.captureJackPoints(responseDialogue) then break end
+            task.wait(0.1)
+        until tick() >= captureDeadline
+
+        success = true
+        Halloween.LastTurnInAt = tick()
+    end)
+
+    if openedDialogue then
+        pcall(function()
+            Gui.forceCloseDialogue(3)
+        end)
+    end
+
+    Halloween.TurnInBusy = false
+    State.HalloweenTurnInBusy = false
+
+    if not ok then
+        return false, "Turn-in failed: " .. tostring(err)
+    end
+    return success, success and ("Turn-in requested for " .. tostring(candyCount) .. " candies.") or failureReason
+end
+
+local HalloweenCollection = HalloweenTab:Section({Title = "Candy Collection", Side = "left"})
+HalloweenCollection:Paragraph({
+    Title = "Auto Collect Candies",
+    Desc = "Picks up Halloween candy only.",
+})
+HalloweenCollection:Toggle({
+    Title = "Auto Collect Candies",
+    Desc = "Collect Halloween candy automatically.",
+    Icon = "candy",
+    Value = false,
+    Callback = function(state)
+        State.HalloweenCandyFarm = state == true
+        if State.HalloweenCandyFarm then
+            State.NoClip = true
+            ItemESP.scan()
+        elseif not State.Farm then
+            State.NoClip = false
+        end
+        MSH.halloweenNotify("Halloween Event", State.HalloweenCandyFarm and "Candy-only collection enabled." or "Candy-only collection disabled.")
+    end,
+})
+
+local HalloweenInfo = HalloweenTab:Section({Title = "Info", Side = "left"})
+Halloween.PointsLabel = HalloweenInfo:Paragraph({
+    Title = "Points from Jack",
+    Desc = "Checking your event points...",
+})
+Halloween.StatusLabel = HalloweenInfo:Paragraph({
+    Title = "Candy Inventory",
+    Desc = "Checking your candy...",
+})
+
+local HalloweenTurnInSection = HalloweenTab:Section({Title = "Candy Turn-In", Side = "right"})
+HalloweenTurnInSection:Input({
+    Title = "Candy Turn-In Threshold",
+    Desc = "Turn in candy when you have this many. Max: 45.",
+    Placeholder = "20",
+    Value = "20",
+    Callback = function(value)
+        local amount = tonumber(value)
+        if amount then
+            Halloween.TurnInThreshold = math.clamp(math.floor(amount), 1, 45)
+        end
+    end,
+})
+HalloweenTurnInSection:Toggle({
+    Title = "Auto Turn In Candies",
+    Desc = "Turn in your candy automatically when you reach the amount above.",
+    Icon = "message-circle",
+    Value = true,
+    Callback = function(state)
+        Halloween.AutoTurnIn = state == true
+        MSH.halloweenNotify("Halloween Event", Halloween.AutoTurnIn and "Automatic candy turn-in enabled." or "Automatic candy turn-in disabled.")
+    end,
+})
+HalloweenTurnInSection:Button({
+    Title = "Turn In Candies Now",
+    Desc = "Turn in your candy now.",
+    Icon = "gift",
+    Callback = function()
+        task.spawn(function()
+            local success, message = MSH.turnInHalloweenCandies()
+            MSH.halloweenNotify("Halloween Event", message, success and "Success" or "Warning")
+        end)
+    end,
+})
+task.spawn(function()
+    local lastStatusUpdate = 0
+    while true do
+        task.wait(0.4)
+
+        local activeDialogue = Gui.currentDialogue()
+        if activeDialogue then
+            Halloween.captureJackPoints(activeDialogue)
+        end
+
+        local candyCount = Halloween.countCandies()
+        if tick() - lastStatusUpdate >= 0.8 then
+            lastStatusUpdate = tick()
+            if Halloween.StatusLabel then
+                pcall(function()
+                    Halloween.StatusLabel:SetDesc(string.format(
+                        "%d / 45 candies in inventory. Auto turn-in threshold: %d.",
+                        candyCount,
+                        math.clamp(tonumber(Halloween.TurnInThreshold) or 20, 1, 45)
+                    ))
+                end)
+            end
+            if Halloween.PointsLabel then
+                pcall(function()
+                    local points = Halloween.readJackPoints()
+                    Halloween.PointsLabel:SetDesc(points and (points .. " points") or "Points value not found in player stats yet.")
+                end)
+            end
+        end
+
+        local threshold = math.clamp(math.floor(tonumber(Halloween.TurnInThreshold) or 20), 1, 45)
+        if Halloween.AutoTurnIn and candyCount >= threshold
+            and not Halloween.TurnInBusy and not State.Selling
+            and tick() - (Halloween.LastTurnInAt or 0) >= 1.0 then
+            local startingCount = candyCount
+            local success, message = MSH.turnInHalloweenCandies()
+            if success then
+                MSH.halloweenNotify("Halloween Event", message, "Success")
+                local waitUntil = tick() + 5
+                repeat
+                    task.wait(0.2)
+                until not Halloween.AutoTurnIn
+                    or Halloween.countCandies() < startingCount
+                    or tick() >= waitUntil
+                task.wait(1.0)
+            elseif Halloween.AutoTurnIn then
+                task.wait(2.0)
+            end
+        end
+    end
+end)
+
 local FarmAutomation = FarmTab:Section({Title = "Automation", Side = "left"})
 AFKFarmToggle = FarmAutomation:Toggle({
     Title = "AFK Farm",
@@ -4203,6 +4632,10 @@ AFKFarmToggle = FarmAutomation:Toggle({
         else
             SHController:stop()
             State.Farm = false
+            if State.HalloweenCandyFarm then
+                State.NoClip = true
+                return
+            end
             if FarmVisual.Decoy and not State.Selling then FarmVisual.restoreAtSafe() end
             State.NoClip = false
             local c = LP.Character
