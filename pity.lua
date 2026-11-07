@@ -6584,6 +6584,7 @@ local function setupStandFarm(standFarmTab)
     local StatusLabel
     local StandFarmToggle
     local PityToggle
+    local StopOnShinyToggle, AutoCollectToggle, SwapEmptyToggle, StandDropdown, PityInput
     local RibFarmToggle
 
     local function notify(title, message, kind, duration)
@@ -7601,6 +7602,15 @@ local function setupStandFarm(standFarmTab)
             return countItem(PITY_ARROW) > 0 and countItem(PITY_ROKA) > 0
         end
 
+        -- Предохранитель: при выпадении скина pity обнуляется. Это не повод останавливать фарм.
+        local skinDrops = 0
+        local noGrowthStreak = 0
+        local function standHasSkin()
+            local morph = getStandMorph()
+            local skin = morph and morph:FindFirstChild("StandSkin")
+            return skin ~= nil and tostring(skin.Value) ~= ""
+        end
+
         while StandFarm.Enabled and not pityReached() do
             -- Нет нужных предметов: фармим ВСЁ, пока на карте не закончатся стрелы/рокаки
             if not itemsReady() then
@@ -7648,14 +7658,46 @@ local function setupStandFarm(standFarmTab)
                     break
                 end
 
+                -- Ждём, пока pity изменится или появится скин
                 local pityDeadline = tick() + 5
-                while StandFarm.Enabled and currentPity() <= pityBefore and tick() < pityDeadline do
+                while StandFarm.Enabled and currentPity() == pityBefore
+                    and not standHasSkin() and tick() < pityDeadline do
                     task.wait(0.1)
                 end
-                if currentPity() <= pityBefore then
-                    notify("Auto Pity", "Стрела использована, но pity не вырос. Остановка.", "Warning")
-                    StandFarm.Enabled = false
-                    break
+                if not StandFarm.Enabled then break end
+
+                local pityNow = currentPity()
+                local skinDropped = pityNow < pityBefore or standHasSkin()
+
+                if skinDropped then
+                    -- Выпал скин, pity обнулился: фарм продолжается
+                    noGrowthStreak = 0
+                    skinDrops += 1
+                    notify("Auto Pity", string.format(
+                        "Выпал скин! Pity сброшен: %d -> %d. Фарм продолжается (скинов: %d).",
+                        pityBefore, pityNow, skinDrops
+                    ), "Success", 8)
+
+                    -- Если включён Auto Swap Empty Stand Slot, прячем стенд со скином в пустой слот,
+                    -- иначе следующая рокака его уничтожит
+                    if StandFarm.SwapEmptySlot then
+                        if trySwapToEmptySlotOnHit() then
+                            continue
+                        end
+                        notify("Auto Pity", "Не удалось спрятать стенд со скином (нет пустого слота?). Остановка, чтобы рокака его не уничтожила.", "Warning", 10)
+                        StandFarm.Enabled = false
+                        break
+                    end
+                elseif pityNow > pityBefore then
+                    noGrowthStreak = 0
+                else
+                    -- pity не изменился и скина нет: допускаем 2 раза подряд, на 3-й останавливаемся
+                    noGrowthStreak += 1
+                    if noGrowthStreak >= 3 then
+                        notify("Auto Pity", "Три стрелы подряд не изменили pity. Остановка.", "Warning")
+                        StandFarm.Enabled = false
+                        break
+                    end
                 end
 
                 unequipAllTools()
@@ -7714,7 +7756,7 @@ local function setupStandFarm(standFarmTab)
         end
 
         if pityReached() then
-            notify("Auto Pity", string.format("Готово: %.2f%% (pity %d).", percentForPity(currentPity()), currentPity()), "Success", 6)
+            notify("Auto Pity", string.format("Готово: %.2f%% (pity %d). Скинов выпало: %d.", percentForPity(currentPity()), currentPity(), skinDrops), "Success", 6)
         end
         _G.__MethionPityFarmAll = false
         setAutoFarmState(pityWasFarm)
@@ -7894,7 +7936,7 @@ local function setupStandFarm(standFarmTab)
         end
     end)
 
-    StandLeft:Dropdown({
+    StandDropdown = StandLeft:Dropdown({
         Title = "Stands to Farm",
         Desc = "Select the stand names that should stop the farm.",
         Values = standOptions,
@@ -7908,7 +7950,7 @@ local function setupStandFarm(standFarmTab)
         end,
     })
 
-    StandLeft:Toggle({
+    StopOnShinyToggle = StandLeft:Toggle({
         Title = "Stop on Shinys",
         Desc = "Stop when a shiny stand is obtained.",
         Value = false,
@@ -7917,7 +7959,7 @@ local function setupStandFarm(standFarmTab)
         end,
     })
 
-    StandLeft:Toggle({
+    AutoCollectToggle = StandLeft:Toggle({
         Title = "Auto Collect Arrow/Roka",
         Desc = "Collect arrows and Rokakaka.",
         Value = false,
@@ -7927,7 +7969,7 @@ local function setupStandFarm(standFarmTab)
         end,
     })
 
-    StandLeft:Toggle({
+    SwapEmptyToggle = StandLeft:Toggle({
         Title = "Auto Swap Empty Stand Slot",
         Desc = "Move to an empty stand slot when a selected stand or shiny is found.",
         Value = false,
@@ -7993,7 +8035,7 @@ local function setupStandFarm(standFarmTab)
         end,
     })
 
-    StandLeft:Input({
+    PityInput = StandLeft:Input({
         Title = "Target Pity %",
         Desc = "Нужный шанс в %. Базовый 1%, +0.04% за каждый pity.",
         Placeholder = "5",
@@ -8056,6 +8098,125 @@ local function setupStandFarm(standFarmTab)
             StandFarm.RibRunning = false
         end,
     })
+
+    -- ===================== CONFIG =====================
+    local CONFIG_FOLDER = "Methion"
+    local CONFIG_FILE = CONFIG_FOLDER .. "/pity_config.json"
+    local configSupported = type(writefile) == "function"
+        and type(readfile) == "function" and type(isfile) == "function"
+
+    local function collectStandConfig()
+        local selected = {}
+        for name, on in pairs(StandFarm.Selected) do
+            if on == true then table.insert(selected, name) end
+        end
+        table.sort(selected)
+        return {
+            PityTargetPercent = StandFarm.PityTargetPercent,
+            StopOnShiny = StandFarm.StopOnShiny,
+            AutoCollectItems = StandFarm.AutoCollectItems,
+            SwapEmptySlot = StandFarm.SwapEmptySlot,
+            SelectedStands = selected,
+        }
+    end
+
+    local function saveStandConfig(silent)
+        if not configSupported then
+            if not silent then notify("Config", "Экзекютор не поддерживает writefile/readfile.", "Error") end
+            return false
+        end
+        local ok, err = pcall(function()
+            if type(makefolder) == "function" then
+                pcall(makefolder, CONFIG_FOLDER)
+            end
+            writefile(CONFIG_FILE, HttpService:JSONEncode(collectStandConfig()))
+        end)
+        if not silent then
+            if ok then
+                notify("Config", "Конфиг сохранён: " .. CONFIG_FILE, "Success")
+            else
+                notify("Config", "Ошибка сохранения: " .. tostring(err), "Error")
+            end
+        end
+        return ok
+    end
+
+    local function applyStandConfigToUI()
+        pcall(function() if PityInput then PityInput:Set(tostring(StandFarm.PityTargetPercent or ""), true) end end)
+        pcall(function() if StopOnShinyToggle then StopOnShinyToggle:Set(StandFarm.StopOnShiny == true, true) end end)
+        pcall(function() if AutoCollectToggle then AutoCollectToggle:Set(StandFarm.AutoCollectItems == true, true) end end)
+        pcall(function() if SwapEmptyToggle then SwapEmptyToggle:Set(StandFarm.SwapEmptySlot == true, true) end end)
+        local selected = {}
+        for name, on in pairs(StandFarm.Selected) do
+            if on == true then table.insert(selected, name) end
+        end
+        pcall(function() if StandDropdown then StandDropdown:Set(selected) end end)
+    end
+
+    local function loadStandConfig(silent)
+        if not configSupported then return false end
+        local okFile, exists = pcall(isfile, CONFIG_FILE)
+        if not okFile or not exists then return false end
+
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(readfile(CONFIG_FILE))
+        end)
+        if not ok or type(data) ~= "table" then
+            if not silent then notify("Config", "Файл конфига повреждён, использую значения по умолчанию.", "Error") end
+            return false
+        end
+
+        local pct = tonumber(data.PityTargetPercent)
+        if pct then StandFarm.PityTargetPercent = pct end
+        if type(data.StopOnShiny) == "boolean" then StandFarm.StopOnShiny = data.StopOnShiny end
+        if type(data.AutoCollectItems) == "boolean" then StandFarm.AutoCollectItems = data.AutoCollectItems end
+        if type(data.SwapEmptySlot) == "boolean" then StandFarm.SwapEmptySlot = data.SwapEmptySlot end
+        if type(data.SelectedStands) == "table" then
+            table.clear(StandFarm.Selected)
+            for _, name in ipairs(data.SelectedStands) do
+                if type(name) == "string" then StandFarm.Selected[name] = true end
+            end
+        end
+
+        applyStandConfigToUI()
+        if not silent then notify("Config", "Конфиг загружен.", "Success") end
+        return true
+    end
+
+    local ConfigSection = standFarmTab:Section({Title = "Config", Side = "right"})
+    ConfigSection:Button({
+        Title = "Save Config",
+        Desc = "Сохранить настройки Stand Farm и Auto Pity.",
+        Icon = "save",
+        Callback = function() saveStandConfig(false) end,
+    })
+    ConfigSection:Button({
+        Title = "Load Config",
+        Desc = "Загрузить сохранённые настройки.",
+        Icon = "download",
+        Callback = function() loadStandConfig(false) end,
+    })
+
+    -- Загрузка при каждом запуске (до автосохранения, чтобы не перезаписать файл дефолтами)
+    task.defer(function()
+        task.wait(0.5)
+        loadStandConfig(true)
+
+        -- Автосохранение при изменении настроек
+        local lastEncoded = nil
+        while true do
+            task.wait(2)
+            if configSupported then
+                local okEncode, encoded = pcall(function()
+                    return HttpService:JSONEncode(collectStandConfig())
+                end)
+                if okEncode and encoded ~= lastEncoded then
+                    if lastEncoded ~= nil then saveStandConfig(true) end
+                    lastEncoded = encoded
+                end
+            end
+        end
+    end)
 end
 
 
