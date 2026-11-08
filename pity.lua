@@ -12,6 +12,8 @@ local MethionSH_Env = type(getgenv) == "function" and getgenv() or _G
 local RELOAD_SCRIPT_RAW_URL = "https://raw.githubusercontent.com/thebbl03-oss/yba/refs/heads/main/pity.lua"
 local MAIN_AUTOSTART = MethionSH_Env.__MethionSHAutoStart == true
 if MAIN_AUTOSTART then MethionSH_Env.__MethionSHAutoStart = nil end
+local MAIN_AUTOPITY = MethionSH_Env.__MethionSHAutoPity == true
+if MAIN_AUTOPITY then MethionSH_Env.__MethionSHAutoPity = nil end
 
 local AIRFLOW_LIBRARY_URL = "https://raw.githubusercontent.com/thebbl03-oss/yba/refs/heads/main/kolo"
 local libraryOk, AirflowLibrary = pcall(function()
@@ -3770,7 +3772,8 @@ local function queueReloadAndRejoin()
 
     local mode = Config.FarmTeleportMode == "tween" and "tween" or "instant"
     local filterJson = HttpService:JSONEncode(Config.FarmOnlyItems or {})
-    local autoStart = State.Farm == true
+    local pityActive = _G.__MethionPityFarmAll == true or (_G.__MethionStartAutoPity ~= nil and _G.__MethionPityRunning == true)
+    local autoStart = State.Farm == true and not pityActive
     local queueSource = table.concat({
         "repeat task.wait() until game:IsLoaded()",
         "local env = type(getgenv) == \"function\" and getgenv() or _G",
@@ -3780,6 +3783,7 @@ local function queueReloadAndRejoin()
         "if filterOk and type(filter) == \"table\" then env.__MethionSHFarmOnlyItems = filter end",
         "env.__MethionSHReloadOnKick = " .. tostring(Config.AutoRejoinEnabled == true),
         "env.__MethionSHAutoStart = " .. tostring(autoStart),
+        "env.__MethionSHAutoPity = " .. tostring(pityActive),
         "local Players = game:GetService(\"Players\")",
         "local ReplicatedStorage = game:GetService(\"ReplicatedStorage\")",
         "local Lighting = game:GetService(\"Lighting\")",
@@ -7553,6 +7557,7 @@ local function setupStandFarm(standFarmTab)
     end
 
     local function runPityFarm()
+        _G.__MethionPityRunning = true
         local targetPct = StandFarm.PityTargetPercent
         if not targetPct then
             notify("Auto Pity", "Введи нужный процент.", "Warning")
@@ -7759,6 +7764,7 @@ local function setupStandFarm(standFarmTab)
             notify("Auto Pity", string.format("Готово: %.2f%% (pity %d). Скинов выпало: %d.", percentForPity(currentPity()), currentPity(), skinDrops), "Success", 6)
         end
         _G.__MethionPityFarmAll = false
+        _G.__MethionPityRunning = false
         setAutoFarmState(pityWasFarm)
         StandFarm.Enabled = false
     end
@@ -8098,6 +8104,24 @@ local function setupStandFarm(standFarmTab)
             StandFarm.RibRunning = false
         end,
     })
+
+    _G.__MethionStartAutoPity = function()
+        if StandFarm.Enabled or StandFarm.Busy then return end
+        if not StandFarm.PityTargetPercent then
+            notify("Auto Pity", "Нет сохранённого процента. Введи Target Pity % и сохрани конфиг.", "Warning")
+            return
+        end
+        if conflictReason() then
+            notify("Auto Pity", conflictReason(), "Warning")
+            return
+        end
+        pcall(function() if PityToggle then PityToggle:Set(true, true) end end)
+        StandFarm.PityMode = true
+        setSellProtection(true)
+        StandFarm.Enabled = true
+        task.spawn(startStandFarm)
+        notify("Auto Pity", string.format("Авто-запуск после перезахода: цель %.2f%%.", StandFarm.PityTargetPercent), "Success")
+    end
 
     -- ===================== CONFIG =====================
     local CONFIG_FOLDER = "Methion"
@@ -17334,7 +17358,12 @@ workspace.DescendantAdded:Connect(function(o)
 end)
 
 Rejoin.start()
-if MAIN_AUTOSTART and AutoFarmToggle then
+if MAIN_AUTOPITY and _G.__MethionStartAutoPity then
+    task.defer(function()
+        task.wait(1.5) -- даём загрузиться конфигу (он грузится через 0.5 с)
+        _G.__MethionStartAutoPity()
+    end)
+elseif MAIN_AUTOSTART and AutoFarmToggle then
     task.defer(function()
         pcall(function() AutoFarmToggle:Set(true, true) end)
         if not State.Farm then
