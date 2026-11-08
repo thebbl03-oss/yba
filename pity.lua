@@ -3786,13 +3786,21 @@ local RELOAD_ON_KICK = %s
 ]], url, filterJson, mode, tostring(autoStart), tostring(pityActive), tostring(Config.AutoRejoinEnabled == true))
 
     local body = [==[
+repeat task.wait() until game:IsLoaded()
+
 local env = type(getgenv) == "function" and getgenv() or _G
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Lighting = game:GetService("Lighting")
+
+-- LocalPlayer может быть nil в первые мгновения после телепорта
 local player = Players.LocalPlayer
+while not player do
+    task.wait(0.1)
+    player = Players.LocalPlayer
+end
 
 env.__MethionSHFarmTeleportMode = FARM_MODE
 local okFilter, filter = pcall(function() return HttpService:JSONDecode(FILTER_JSON) end)
@@ -3800,8 +3808,6 @@ if okFilter and type(filter) == "table" then env.__MethionSHFarmOnlyItems = filt
 env.__MethionSHReloadOnKick = RELOAD_ON_KICK
 env.__MethionSHAutoStart = AUTO_START
 env.__MethionSHAutoPity = AUTO_PITY
-
-repeat task.wait() until game:IsLoaded()
 
 -- LOADED выставляем сразу, а не после RemoteEvent (он может ждать до 15 секунд)
 local function enterGame()
