@@ -3772,73 +3772,135 @@ local function queueReloadAndRejoin()
 
     local mode = Config.FarmTeleportMode == "tween" and "tween" or "instant"
     local filterJson = HttpService:JSONEncode(Config.FarmOnlyItems or {})
-    local pityActive = _G.__MethionPityFarmAll == true or (_G.__MethionStartAutoPity ~= nil and _G.__MethionPityRunning == true)
+    local pityActive = _G.__MethionPityRunning == true
     local autoStart = State.Farm == true and not pityActive
-    local queueSource = table.concat({
-        "repeat task.wait() until game:IsLoaded()",
-        "local env = type(getgenv) == \"function\" and getgenv() or _G",
-        "local http = game:GetService(\"HttpService\")",
-        "env.__MethionSHFarmTeleportMode = " .. string.format("%q", mode),
-        "local filterOk, filter = pcall(function() return http:JSONDecode(" .. string.format("%q", filterJson) .. ") end)",
-        "if filterOk and type(filter) == \"table\" then env.__MethionSHFarmOnlyItems = filter end",
-        "env.__MethionSHReloadOnKick = " .. tostring(Config.AutoRejoinEnabled == true),
-        "env.__MethionSHAutoStart = " .. tostring(autoStart),
-        "env.__MethionSHAutoPity = " .. tostring(pityActive),
-        "local Players = game:GetService(\"Players\")",
-        "local ReplicatedStorage = game:GetService(\"ReplicatedStorage\")",
-        "local Lighting = game:GetService(\"Lighting\")",
-        "local TeleportService = game:GetService(\"TeleportService\")",
-        "local player = Players.LocalPlayer",
-        "local function enterGame()",
-        "    local playerGui = player:WaitForChild(\"PlayerGui\")",
-        "    pcall(function() if not playerGui:FindFirstChild(\"HUD\") then local objects = ReplicatedStorage:FindFirstChild(\"Objects\"); local template = objects and objects:FindFirstChild(\"HUD\"); if template then template:Clone().Parent = playerGui end end end)",
-        "    local character = player.Character or player.CharacterAdded:Wait()",
-        "    local remote = character:WaitForChild(\"RemoteEvent\", 15)",
-        "    if remote and remote:IsA(\"RemoteEvent\") then remote:FireServer(\"PressedPlay\") end",
-        "    for _, name in ipairs({\"LoadingScreen1\", \"LoadingScreen\"}) do local screen = playerGui:FindFirstChild(name); if screen then screen:Destroy() end end",
-        "    player:SetAttribute(\"LOADED\", \"Skip\")",
-        "    local dof = Lighting:FindFirstChild(\"DepthOfField\"); if dof then dof:Destroy() end",
-        "    local loading = workspace:FindFirstChild(\"LoadingScreen\"); local song = loading and loading:FindFirstChild(\"Song\"); if song then song:Destroy() end",
-        "end",
-        "task.spawn(function() while true do pcall(enterGame); task.wait(3) end end)",
-        "local deadline = os.clock() + 10",
-        "local entered = false",
-        "repeat",
-        "    task.wait(0.1)",
-        "    local character = player.Character",
-        "    local humanoid = character and character:FindFirstChildOfClass(\"Humanoid\")",
-        "    local root = character and character:FindFirstChild(\"HumanoidRootPart\")",
-        "    entered = character ~= nil and character.Parent ~= nil and humanoid ~= nil and humanoid.Health > 0 and root ~= nil and player:GetAttribute(\"LOADED\") == \"Skip\"",
-        "until entered or os.clock() >= deadline",
-        "if not entered then",
-        "    local queueFn = env.queue_on_teleport or env.queueonteleport",
-        "    if type(queueFn) ~= \"function\" and type(env.syn) == \"table\" then queueFn = env.syn.queue_on_teleport end",
-        "    local retrySource = env.__MethionSHRecoverySource",
-        "    if type(queueFn) == \"function\" and type(retrySource) == \"string\" then pcall(queueFn, retrySource) end",
-        "    local targetId = nil",
-        "    local ok, response = pcall(function() return game:HttpGet(\"https://games.roblox.com/v1/games/\" .. tostring(game.PlaceId) .. \"/servers/Public?sortOrder=Asc&limit=100\") end)",
-        "    if ok and type(response) == \"string\" then",
-        "        local decodedOk, payload = pcall(function() return http:JSONDecode(response) end)",
-        "        if decodedOk and type(payload) == \"table\" and type(payload.data) == \"table\" then",
-        "            local candidates = {}",
-        "            for _, server in ipairs(payload.data) do local id = server.id; local playing = tonumber(server.playing) or math.huge; local maximum = tonumber(server.maxPlayers) or 0; if type(id) == \"string\" and id ~= \"\" and id ~= game.JobId and maximum > 0 and playing < maximum then table.insert(candidates, {id = id, playing = playing}) end end",
-        "            table.sort(candidates, function(a, b) return a.playing < b.playing end)",
-        "            if candidates[1] then targetId = candidates[1].id end",
-        "        end",
-        "    end",
-        "    local hopOk = false",
-        "    if targetId then hopOk = pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, targetId, player) end) end",
-        "    if not hopOk then pcall(function() TeleportService:Teleport(game.PlaceId, player) end) end",
-        "    return",
-        "end",
-        "task.wait(0.5)",
-        "local source = game:HttpGet(" .. string.format("%q", url) .. ")",
-        "assert(type(source) == 'string' and #source > 0, 'Methion source is empty')",
-        "local chunk, err = loadstring(source)",
-        "assert(type(chunk) == 'function', tostring(err or 'MethionSH compile failed'))",
-        "chunk()",
-        "",
-    }, "\n")
+
+    -- Значения, зашитые в очередь: URL, фильтр, режимы
+    local header = string.format([[
+local RELOAD_URL = %q
+local FILTER_JSON = %q
+local FARM_MODE = %q
+local AUTO_START = %s
+local AUTO_PITY = %s
+local RELOAD_ON_KICK = %s
+]], url, filterJson, mode, tostring(autoStart), tostring(pityActive), tostring(Config.AutoRejoinEnabled == true))
+
+    local body = [==[
+local env = type(getgenv) == "function" and getgenv() or _G
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+local player = Players.LocalPlayer
+
+env.__MethionSHFarmTeleportMode = FARM_MODE
+local okFilter, filter = pcall(function() return HttpService:JSONDecode(FILTER_JSON) end)
+if okFilter and type(filter) == "table" then env.__MethionSHFarmOnlyItems = filter end
+env.__MethionSHReloadOnKick = RELOAD_ON_KICK
+env.__MethionSHAutoStart = AUTO_START
+env.__MethionSHAutoPity = AUTO_PITY
+
+repeat task.wait() until game:IsLoaded()
+
+-- LOADED выставляем сразу, а не после RemoteEvent (он может ждать до 15 секунд)
+local function enterGame()
+    player:SetAttribute("LOADED", "Skip")
+    local playerGui = player:WaitForChild("PlayerGui")
+    pcall(function()
+        if not playerGui:FindFirstChild("HUD") then
+            local objects = ReplicatedStorage:FindFirstChild("Objects")
+            local template = objects and objects:FindFirstChild("HUD")
+            if template then template:Clone().Parent = playerGui end
+        end
+    end)
+    local character = player.Character or player.CharacterAdded:Wait()
+    local remote = character:WaitForChild("RemoteEvent", 15)
+    if remote and remote:IsA("RemoteEvent") then remote:FireServer("PressedPlay") end
+    for _, name in ipairs({"LoadingScreen1", "LoadingScreen"}) do
+        local screen = playerGui:FindFirstChild(name)
+        if screen then screen:Destroy() end
+    end
+    local dof = Lighting:FindFirstChild("DepthOfField")
+    if dof then dof:Destroy() end
+    local loading = workspace:FindFirstChild("LoadingScreen")
+    local song = loading and loading:FindFirstChild("Song")
+    if song then song:Destroy() end
+end
+task.spawn(function()
+    while true do
+        pcall(enterGame)
+        task.wait(3)
+    end
+end)
+
+-- Ждём персонажа (не LOADED). Дедлайн 60 секунд, а не 10.
+local deadline = os.clock() + 60
+local ready = false
+repeat
+    task.wait(0.2)
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    ready = character ~= nil and character.Parent ~= nil and humanoid ~= nil
+        and humanoid.Health > 0 and root ~= nil
+until ready or os.clock() >= deadline
+
+if not ready then
+    -- Персонаж так и не появился: переходим на другой сервер, очередь сработает там же
+    local targetId = nil
+    local okList, response = pcall(function()
+        return game:HttpGet("https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Asc&limit=100")
+    end)
+    if okList and type(response) == "string" then
+        local okDecode, payload = pcall(function() return HttpService:JSONDecode(response) end)
+        if okDecode and type(payload) == "table" and type(payload.data) == "table" then
+            local candidates = {}
+            for _, server in ipairs(payload.data) do
+                local id = server.id
+                local playing = tonumber(server.playing) or math.huge
+                local maximum = tonumber(server.maxPlayers) or 0
+                if type(id) == "string" and id ~= "" and id ~= game.JobId and maximum > 0 and playing < maximum then
+                    table.insert(candidates, {id = id, playing = playing})
+                end
+            end
+            table.sort(candidates, function(a, b) return a.playing < b.playing end)
+            if candidates[1] then targetId = candidates[1].id end
+        end
+    end
+    local hopOk = false
+    if targetId then
+        hopOk = pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, targetId, player) end)
+    end
+    if not hopOk then pcall(function() TeleportService:Teleport(game.PlaceId, player) end) end
+    return
+end
+
+-- Загрузка основного скрипта с повторами при сбое сети
+task.wait(0.5)
+local source, lastErr = nil, nil
+for attempt = 1, 5 do
+    local okGet, result = pcall(function() return game:HttpGet(RELOAD_URL) end)
+    if okGet and type(result) == "string" and #result > 0 then
+        source = result
+        break
+    end
+    lastErr = result
+    task.wait(2)
+end
+if not source then
+    warn("[Methion] не удалось скачать скрипт после 5 попыток: " .. tostring(lastErr))
+    return
+end
+local chunk, compileErr = loadstring(source)
+if type(chunk) ~= "function" then
+    warn("[Methion] скачанный скрипт не компилируется: " .. tostring(compileErr))
+    return
+end
+chunk()
+]==]
+
+    local queueSource = header .. body
     MethionSH_Env.__MethionSHRecoverySource = queueSource
     local ok = pcall(queueFunction, queueSource)
     if not ok then return false end
