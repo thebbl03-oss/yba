@@ -9,7 +9,7 @@ local PhysicsService = game:GetService("PhysicsService")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local MethionSH_Env = type(getgenv) == "function" and getgenv() or _G
-local RELOAD_SCRIPT_RAW_URL = "https://raw.githubusercontent.com/thebbl03-oss/yba/refs/heads/main/pity.lua"
+local RELOAD_SCRIPT_RAW_URL = "https://raw.githubusercontent.com/thebbl03-oss/yba/refs/heads/main/unstable.lua"
 local MAIN_AUTOSTART = MethionSH_Env.__MethionSHAutoStart == true
 if MAIN_AUTOSTART then MethionSH_Env.__MethionSHAutoStart = nil end
 local MAIN_AUTOPITY = MethionSH_Env.__MethionSHAutoPity == true
